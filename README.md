@@ -9,7 +9,7 @@ ompup                       # current Git project
 ompup example-project           # named project from any directory
 ompup --pick                # interactive project picker
 ompup --cmux                # open or reuse a cmux workspace
-/ompup handoff              # from inside local omp running in cmux
+/ompup                      # hand off this live local OMP session
 ompup env status --all      # inspect remote OMP without changing it
 ompup env sync --all        # mirror mode only: align every reachable machine
 ompup auth status           # optional: verify a configured credential broker
@@ -81,7 +81,7 @@ omp --extension ./ompup/extension/index.ts
 | `ompup unpin [PROJECT]` | Return a project to automatic placement |
 | `ompup shell [PROJECT]` | Bootstrap or sync when needed, then attach a plain shell |
 | `ompup [PROJECT] --cmux` | Open or reuse a named cmux workspace for the remote session |
-| `/ompup handoff` | Wait for idle, transfer and verify this session, start remote OMP, then replace the current cmux surface |
+| `/ompup` or `/ompup handoff` | Wait for idle, transfer and verify this session, start remote OMP, then replace the current cmux surface |
 | `/ompup handoff --host HOST` | Hand the session to a specific configured host |
 | `ompup env status --all` | Compare the local shared-environment fingerprint with every configured host |
 | `ompup env sync --all` | Update OMP, transfer the safe declarative environment, provision broker tokens over SSH, and verify each reachable host |

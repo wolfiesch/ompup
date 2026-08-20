@@ -3,12 +3,12 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-
 import ompup from "../extension/index.ts";
 
 
-test("handoff refuses while background jobs are running", async () => {
+test("bare command defaults to handoff and refuses running jobs", async () => {
   type CommandHandler = (args: string, ctx: ExtensionCommandContext) => Promise<void> | void;
   let handler: CommandHandler | undefined;
   const notifications: Array<{ message: string; level: string }> = [];
   const api = {
-    setLabel() {},
+    setLabel() { },
     registerCommand(_name: string, options: { handler: CommandHandler }) {
       handler = options.handler;
     },
@@ -23,7 +23,7 @@ test("handoff refuses while background jobs are running", async () => {
         notifications.push({ message, level });
       },
     },
-    async waitForIdle() {},
+    async waitForIdle() { },
     getAsyncJobSnapshot() {
       return {
         running: [{ id: "bash_123", label: "long build" }],
@@ -37,7 +37,7 @@ test("handoff refuses while background jobs are running", async () => {
       },
     },
   } as unknown as ExtensionCommandContext;
-  await handler("handoff", context);
+  await handler("", context);
 
   expect(notifications).toEqual([
     {
