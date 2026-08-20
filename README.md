@@ -160,6 +160,7 @@ Set `environment.mode` to `mirror` only when the local machine should manage rem
     "mode": "mirror",
     "include_extensions": ["portable-status.ts"],
     "exclude_skills": ["private-*"],
+    "include_profiles": ["research", "review"],
     "plugins": ["portable-plugin"],
     "auth_host": "compute",
     "auth_broker_url": "https://broker.example.internal"
@@ -167,7 +168,7 @@ Set `environment.mode` to `mirror` only when the local machine should manage rem
 }
 ```
 
-Mirror mode installs a content-addressed release on each selected host. Existing target files move into timestamped backups before replacement. Only explicitly listed extensions and plugins transfer. Skills ignored by local OMP or matched by `exclude_skills` remain local. Common credential files, machine-local state, sessions, memories, caches, databases, MCP definitions, and model files remain local. Every release and project snapshot is scanned with `gitleaks`.
+Mirror mode installs a content-addressed release on each selected host. Existing target files move into timestamped backups before replacement. `include_profiles` mirrors each named profile's portable `config.yml`, rules, skills, agents, commands, hooks, and docs under the same profile name; machine-local extension paths are removed from the rendered remote config. Only explicitly listed extensions and plugins transfer. Skills ignored by local OMP or matched by `exclude_skills` remain local. Common credential files, machine-local state, sessions, memories, caches, databases, MCP definitions, model files, and SSH capabilities remain local. Every release and project snapshot is scanned with `gitleaks`.
 
 The broker fields are optional and must be configured together. When present, `ompup auth setup` retrieves the token over SSH and stores it under the configured OMP root with mode `0600`. The broker URL should be reachable only through a trusted private network or TLS.
 

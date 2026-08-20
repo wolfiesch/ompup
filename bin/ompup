@@ -974,8 +974,7 @@ def create_parser() -> argparse.ArgumentParser:
         env_subparser = env_commands.add_parser(name, help=help_text)
         env_subparser.add_argument("--host", action="append", default=[], help="configured host name or SSH destination")
         env_subparser.add_argument("--all", action="store_true", help="target every configured host")
-        if name == "status":
-            env_subparser.add_argument("--json", action="store_true", help="emit status as JSON")
+        env_subparser.add_argument("--json", action="store_true", help="emit status as JSON")
     auth_parser = commands.add_parser("auth", help="configure and verify the shared OMP auth broker")
     auth_commands = auth_parser.add_subparsers(dest="auth_command", required=True)
     auth_commands.add_parser("setup", help="provision the broker token and configure this machine")

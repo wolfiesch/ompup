@@ -17,7 +17,7 @@ from typing import Iterable
 
 from .hosts import CONFIG_PATH, HostConfig, HostSelectionError, find_host
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 AGENT_HOME = Path(os.environ.get("OMPUP_AGENT_HOME", Path.home() / ".omp/agent")).expanduser()
 CONFIG_ROOT = Path(os.environ.get("PI_CONFIG_DIR", Path.home() / ".omp")).expanduser()
 STATE_ROOT = Path(".local/state/ompup/environment")
@@ -31,6 +31,7 @@ ENVIRONMENT_KEYS = {
     "auth_host",
     "auth_broker_url",
     "include_extensions",
+    "include_profiles",
     "exclude_skills",
     "plugins",
 }
@@ -226,6 +227,7 @@ class EnvironmentConfig:
     auth_host: str = ""
     broker_url: str = ""
     include_extensions: tuple[str, ...] = ()
+    include_profiles: tuple[str, ...] = ()
     exclude_skills: tuple[str, ...] = ()
     plugins: tuple[str, ...] = ()
 
@@ -289,11 +291,15 @@ def load_environment_config() -> EnvironmentConfig:
     include_extensions = _string_list(raw.get("include_extensions", []), "include_extensions")
     if any(Path(name).name != name or name in {".", ".."} for name in include_extensions):
         raise HostSelectionError("environment.include_extensions entries must be file names")
+    include_profiles = _string_list(raw.get("include_profiles", []), "include_profiles")
+    if any(Path(name).name != name or name in {".", ".."} for name in include_profiles):
+        raise HostSelectionError("environment.include_profiles entries must be profile names")
     return EnvironmentConfig(
         mode=mode,
         auth_host=auth_host,
         broker_url=broker_url,
         include_extensions=include_extensions,
+        include_profiles=include_profiles,
         exclude_skills=_string_list(raw.get("exclude_skills", []), "exclude_skills"),
         plugins=_string_list(raw.get("plugins", []), "plugins"),
     )
@@ -487,6 +493,35 @@ def _build_release_uncached(config: EnvironmentConfig, host: HostConfig) -> Envi
             {"source": relative, "target": agent_target(f"extensions/{name}"), "mode": "link"}
         )
 
+    for profile in config.include_profiles:
+        source_agent = CONFIG_ROOT / "profiles" / profile / "agent"
+        if not source_agent.is_dir():
+            raise RuntimeError(f"configured portable profile is unavailable: {profile}")
+        profile_prefix = f"profiles/{profile}/agent"
+        profile_target = f"{host.remote_config_root}/{profile_prefix}"
+        profile_config = source_agent / "config.yml"
+        if not profile_config.is_file():
+            raise RuntimeError(f"configured portable profile has no config.yml: {profile}")
+        relative = f"{profile_prefix}/config.yml"
+        destination = payload / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(_render_config(profile_config, config.broker_url, remote=True))
+        targets.append({"source": relative, "target": f"{profile_target}/config.yml", "mode": "copy"})
+        for name in SHARED_FILES:
+            source = source_agent / name
+            if source.exists():
+                relative = f"{profile_prefix}/{name}"
+                _copy_entry(source, payload / relative)
+                targets.append({"source": relative, "target": f"{profile_target}/{name}", "mode": "link"})
+        for directory in (*SHARED_ENTRY_DIRS, *SHARED_WHOLE_DIRS):
+            source = source_agent / directory
+            if source.is_dir():
+                relative = f"{profile_prefix}/{directory}"
+                _copy_entry(source, payload / relative)
+                targets.append(
+                    {"source": relative, "target": f"{profile_target}/{directory}", "mode": "link"}
+                )
+
     _copy_entry(PLUGIN_ROOT, payload / "plugins/ompup")
     plugin_versions = _plugin_versions(config)
     for package in plugin_versions:
@@ -498,8 +533,16 @@ def _build_release_uncached(config: EnvironmentConfig, host: HostConfig) -> Envi
     for target in targets:
         target["sha256"] = _digest(payload / target["source"])
     omp_version = _omp_version()
-    auth_token_target = (
-        f"{host.remote_config_root}/auth-broker.token" if config.broker_url else None
+    auth_token_targets = (
+        [
+            f"{host.remote_config_root}/auth-broker.token",
+            *[
+                f"{host.remote_config_root}/profiles/{profile}/auth-broker.token"
+                for profile in config.include_profiles
+            ],
+        ]
+        if config.broker_url
+        else []
     )
     fingerprint_input = json.dumps(
         {
@@ -507,7 +550,7 @@ def _build_release_uncached(config: EnvironmentConfig, host: HostConfig) -> Envi
             "ompVersion": omp_version,
             "targets": targets,
             "externalPlugins": plugin_versions,
-            "authTokenTarget": auth_token_target,
+            "authTokenTargets": auth_token_targets,
             "plugins": {
                 "ompup": _digest(payload / "plugins/ompup"),
                 **{
@@ -525,7 +568,7 @@ def _build_release_uncached(config: EnvironmentConfig, host: HostConfig) -> Envi
         "ompVersion": omp_version,
         "targets": targets,
         "externalPlugins": plugin_versions,
-        "authTokenTarget": auth_token_target,
+        "authTokenTargets": auth_token_targets,
         "hostLocal": list(HOST_LOCAL),
         "excludedExtensions": sorted(
             path.name
@@ -596,6 +639,15 @@ def _source_signature(config: EnvironmentConfig, host: HostConfig) -> str:
         entries.extend(_signature_entry(f"agent/{directory}", AGENT_HOME / directory))
     for name in config.include_extensions:
         entries.extend(_signature_entry(f"agent/extensions/{name}", AGENT_HOME / "extensions" / name))
+    for profile in config.include_profiles:
+        source_agent = CONFIG_ROOT / "profiles" / profile / "agent"
+        entries.extend(_signature_entry(f"profiles/{profile}/agent/config.yml", source_agent / "config.yml"))
+        for name in SHARED_FILES:
+            entries.extend(_signature_entry(f"profiles/{profile}/agent/{name}", source_agent / name))
+        for directory in (*SHARED_ENTRY_DIRS, *SHARED_WHOLE_DIRS):
+            entries.extend(
+                _signature_entry(f"profiles/{profile}/agent/{directory}", source_agent / directory)
+            )
     entries.extend(_signature_entry("agent/config.yml", AGENT_HOME / "config.yml"))
     entries.extend(_signature_entry("plugins/ompup", PLUGIN_ROOT))
     if config.plugins:
@@ -613,6 +665,7 @@ def _source_signature(config: EnvironmentConfig, host: HostConfig) -> str:
             "config": {
                 "brokerUrl": config.broker_url,
                 "includeExtensions": config.include_extensions,
+                "includeProfiles": config.include_profiles,
                 "excludeSkills": config.exclude_skills,
                 "plugins": config.plugins,
                 "remoteAgentHome": host.remote_agent_home,
@@ -762,22 +815,23 @@ def _update_remote_omp(host: HostConfig, expected: str) -> None:
         raise RuntimeError(f"OMP version mismatch on {host.name}: local={expected}, remote={actual}")
 
 
-def _provision_token(host: HostConfig, token: bytes) -> None:
-    token_path = f"{host.remote_config_root}/auth-broker.token"
-    command = (
-        f'umask 077; mkdir -p "$HOME/{host.remote_config_root}"; '
-        f'cat > "$HOME/{token_path}"; chmod 600 "$HOME/{token_path}"'
-    )
-    result = _run(["ssh", "-o", "ConnectTimeout=8", host.ssh, command], input_bytes=token, timeout=20)
-    if result.returncode != 0:
-        raise RuntimeError(f"could not provision broker token on {host.name}")
+def _provision_token(host: HostConfig, token: bytes, targets: Iterable[str]) -> None:
+    for token_path in targets:
+        parent = str(Path(token_path).parent)
+        command = (
+            f'umask 077; mkdir -p "$HOME/{parent}"; '
+            f'cat > "$HOME/{token_path}"; chmod 600 "$HOME/{token_path}"'
+        )
+        result = _run(["ssh", "-o", "ConnectTimeout=8", host.ssh, command], input_bytes=token, timeout=20)
+        if result.returncode != 0:
+            raise RuntimeError(f"could not provision broker token on {host.name}: {token_path}")
 
 
 def sync_environment(host: HostConfig, release: EnvironmentRelease, token: bytes | None = None) -> EnvironmentStatus:
     _scan_release(release)
     _update_remote_omp(host, str(release.manifest["ompVersion"]))
     if token is not None:
-        _provision_token(host, token)
+        _provision_token(host, token, release.manifest.get("authTokenTargets", ()))
     release_relative = STATE_ROOT / "releases" / release.fingerprint
     prepare = f"umask 077; mkdir -p {shlex.quote(str(release_relative.parent))}; rm -rf {shlex.quote(str(release_relative))}; mkdir -p {shlex.quote(str(release_relative))}; tar -xzf - -C {shlex.quote(str(release_relative))}"
     with tempfile.NamedTemporaryFile(prefix="ompup-environment-", suffix=".tar.gz") as archive:
