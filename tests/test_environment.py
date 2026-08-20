@@ -29,6 +29,7 @@ class EnvironmentReleaseTests(unittest.TestCase):
             mode="mirror",
             broker_url="http://100.64.0.1:8765",
             include_extensions=("portable-status.ts",),
+            include_profiles=("research",),
             exclude_skills=("private-deploy",),
             plugins=("omp-side",),
         )
@@ -52,6 +53,12 @@ class EnvironmentReleaseTests(unittest.TestCase):
         omp_side.mkdir(parents=True)
         (omp_side / "package.json").write_text('{"name":"omp-side","version":"0.1.1"}\n')
         (omp_side / "index.ts").write_text("export default () => {}\n")
+        profile_agent = self.config_root / "profiles/research/agent"
+        profile_agent.mkdir(parents=True)
+        (profile_agent / "config.yml").write_text("theme: profile\nextensions:\n  - ~/Projects/local-only.ts\n")
+        (profile_agent / "AGENTS.md").write_text("profile rules\n")
+        (profile_agent / "commands").mkdir()
+        (profile_agent / "commands/profile.md").write_text("profile command\n")
         self.patches = [
             mock.patch.object(environment, "AGENT_HOME", self.agent),
             mock.patch.object(environment, "CONFIG_ROOT", self.config_root),
@@ -83,6 +90,11 @@ class EnvironmentReleaseTests(unittest.TestCase):
             self.assertNotIn(".omp/agent/extensions/local-only.ts", targets)
             self.assertIn("local-only.ts", release.manifest["excludedExtensions"])
             self.assertFalse((release.root / "payload/agent/skills/example/.env").exists())
+            self.assertIn(".omp/profiles/research/agent/config.yml", targets)
+            self.assertIn(".omp/profiles/research/agent/AGENTS.md", targets)
+            self.assertIn(".omp/profiles/research/agent/commands", targets)
+            profile_config = release.root / "payload/profiles/research/agent/config.yml"
+            self.assertIn("auth-url: http://100.64.0.1:8765", profile_config.read_text())
             self.assertEqual(release.manifest["externalPlugins"], {"omp-side": "0.1.1"})
             self.assertTrue((release.root / "payload/plugins/ompup/package.json").is_file())
             manifest_text = (release.root / "manifest.json").read_text()
@@ -149,8 +161,11 @@ class EnvironmentReleaseTests(unittest.TestCase):
             self.assertIn("custom/omp-agent/config.yml", targets)
             self.assertNotIn(".omp/agent/config.yml", targets)
             self.assertEqual(
-                release.manifest["authTokenTarget"],
-                "custom/omp/auth-broker.token",
+                release.manifest["authTokenTargets"],
+                [
+                    "custom/omp/auth-broker.token",
+                    "custom/omp/profiles/research/auth-broker.token",
+                ],
             )
         finally:
             environment.cleanup_release(release)
@@ -176,6 +191,29 @@ class EnvironmentConfigTests(unittest.TestCase):
                 config = environment.load_environment_config()
         self.assertEqual(config.mode, "mirror")
         self.assertFalse(config.auth_host)
+
+    def test_mirror_configuration_accepts_named_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            config_path = Path(temp_name) / "hosts.json"
+            config_path.write_text(
+                '{"hosts":[{"name":"box","ssh":"box"}],'
+                '"environment":{"mode":"mirror","include_profiles":["research","review","research"]}}\n'
+            )
+            with mock.patch.object(environment, "CONFIG_PATH", config_path):
+                config = environment.load_environment_config()
+        self.assertEqual(config.include_profiles, ("research", "review"))
+
+    def test_mirror_configuration_rejects_profile_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            config_path = Path(temp_name) / "hosts.json"
+            config_path.write_text(
+                '{"environment":{"mode":"mirror","include_profiles":["../private"]}}\n'
+            )
+            with (
+                mock.patch.object(environment, "CONFIG_PATH", config_path),
+                self.assertRaisesRegex(environment.HostSelectionError, "profile names"),
+            ):
+                environment.load_environment_config()
 
     def test_environment_rejects_unknown_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -233,18 +271,25 @@ class EnvironmentTransportTests(unittest.TestCase):
         host = HostConfig("box", "box-ssh")
         completed = subprocess.CompletedProcess([], 0, b"", b"")
         token = b"private-broker-token-value"
+        targets = (".omp/auth-broker.token", ".omp/profiles/research/auth-broker.token")
         with mock.patch.object(environment, "_run", return_value=completed) as run:
-            environment._provision_token(host, token)
-        command = run.call_args.args[0]
-        self.assertNotIn(token.decode(), " ".join(command))
-        self.assertEqual(run.call_args.kwargs["input_bytes"], token)
-        self.assertIn('$HOME/.omp/auth-broker.token', command[-1])
+            environment._provision_token(host, token, targets)
+        self.assertEqual(run.call_count, 2)
+        for call, target in zip(run.call_args_list, targets, strict=True):
+            command = call.args[0]
+            self.assertNotIn(token.decode(), " ".join(command))
+            self.assertEqual(call.kwargs["input_bytes"], token)
+            self.assertIn(f"$HOME/{target}", command[-1])
 
     def test_token_uses_host_specific_remote_config_root(self) -> None:
         host = HostConfig("box", "box-ssh", remote_config_root="custom/omp")
         completed = subprocess.CompletedProcess([], 0, b"", b"")
         with mock.patch.object(environment, "_run", return_value=completed) as run:
-            environment._provision_token(host, b"private-broker-token-value")
+            environment._provision_token(
+                host,
+                b"private-broker-token-value",
+                ("custom/omp/auth-broker.token",),
+            )
         self.assertIn('$HOME/custom/omp/auth-broker.token', run.call_args.args[0][-1])
 
     def test_configure_local_broker_backs_up_changed_config(self) -> None:
