@@ -66,9 +66,9 @@ export default function ompup(pi: ExtensionAPI) {
  pi.setLabel("ompup");
 
  pi.registerCommand("ompup", {
-  description: "Sync project state or hand this live session to remote tmux",
+  description: "Hand this live session to remote tmux, or sync project state",
   handler: async (args, ctx) => {
-   const tokens = args.trim() ? args.trim().split(/\s+/) : ["status"];
+   const tokens = args.trim() ? args.trim().split(/\s+/) : ["handoff"];
    const sub = resolveSubcommand(tokens.shift()!);
    if (!sub) {
     ctx.ui.notify(`/ompup takes one of: ${SUBCOMMANDS.join(", ")} (a unique prefix works)`, "error");
