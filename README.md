@@ -6,7 +6,7 @@ ompup probes configured hosts, honors project and workload affinity, pins the fi
 
 ```bash
 ompup                       # current Git project
-ompup UFC-pokedex           # named project from any directory
+ompup example-project           # named project from any directory
 ompup --pick                # interactive project picker
 ompup --cmux                # open or reuse a cmux workspace
 /ompup handoff              # from inside local omp running in cmux
